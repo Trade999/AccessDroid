@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "androidpage"
+version = "0.1.0"
+description = "Synchronous and asynchronous Python client for AccessDroid amctl"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "androidpage contributors" }]
+license = { text = "MIT" }
+keywords = ["android", "accessdroid", "termux", "amctl", "automation"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: Android",
+]
+dependencies = []
+
+[project.optional-dependencies]
+test = ["pytest>=8.0"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/androidpage"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]

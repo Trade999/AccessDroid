@@ -1,0 +1,100 @@
+#!/data/data/com.termux/files/usr/bin/bash
+# amctl — AccessDroid control CLI
+set -euo pipefail
+SECRET="termux-accessdroid-2025"
+PKG="com.accessdroid.termux"
+
+ac() { # ac <action> [--extras]
+    local action="$1"; shift
+    /system/bin/am broadcast --user 0 -p "$PKG" -a "com.accessdroid.termux.$action" --es secret "$SECRET" "$@" 2>&1
+}
+
+case "${1:-help}" in
+    tap)        ac ACTION_TAP --ei x "${2:-0}" --ei y "${3:-0}" --el duration "${4:-80}" ;;
+    dtap|doubletap) ac ACTION_DOUBLE_TAP --ei x "${2:-0}" --ei y "${3:-0}" ;;
+    long|longpress) ac ACTION_LONG_PRESS --ei x "${2:-0}" --ei y "${3:-0}" --el duration "${4:-600}" ;;
+    swipe)      ac ACTION_SWIPE --ei x1 "${2:-0}" --ei y1 "${3:-0}" --ei x2 "${4:-0}" --ei y2 "${5:-0}" --el duration "${6:-300}" ;;
+    pinch)      ac ACTION_PINCH --ei cx "${2:--1}" --ei cy "${3:--1}" --ef scale "${4:-0.5}" ;;
+    scroll)     d="${2:-down}"; [[ "$d" == down ]] && ac ACTION_SCROLL_DOWN --ei x "${3:-0}" --ei y "${4:-0}" || ac ACTION_SCROLL_UP --ei x "${3:-0}" --ei y "${4:-0}" ;;
+    type)       ac ACTION_TYPE --es text "$2" ;;
+    clear)      ac ACTION_CLEAR_TEXT ;;
+    copy)       ac ACTION_PASTE --ei clipboardAction 16384 ;;
+    cut)        ac ACTION_PASTE --ei clipboardAction 65536 ;;
+    paste)      ac ACTION_PASTE --ei clipboardAction 32768 ;;
+    focus)      if [[ "${2:-}" == --id ]]; then ac ACTION_FOCUS --es id "$3"; else ac ACTION_FOCUS --es text "${2:-}"; fi ;;
+    click)      ac ACTION_CLICK_TEXT --es text "$2" ;;
+    clickid)    ac ACTION_CLICK_ID --es id "$2" ;;
+    scrollto)   ac ACTION_SCROLL_TO --es text "$2" ;;
+    find)       ac ACTION_FIND_ID --es id "$2" ;;
+    back)       ac ACTION_BACK ;;
+    home)       ac ACTION_HOME ;;
+    recents)    ac ACTION_RECENTS ;;
+    notif*)     ac ACTION_NOTIFICATIONS ;;
+    qs|quick)   ac ACTION_QUICK_SETTINGS ;;
+    lock)       ac ACTION_LOCK ;;
+    power)      ac ACTION_POWER ;;
+    shot|screenshot)
+        ac ACTION_SCREENSHOT 2>&1
+        /system/bin/am broadcast --user 0 -a com.accessdroid.termux.ACTION_SCREENDUMP --es secret "$SECRET" 2>&1
+        echo "Screenshot sent (check /sdcard/amctl-shot.png or use ACTION_SCREENSHOT)" ;;
+    shotsave|screencap)
+        /system/bin/screencap -p "/sdcard/screencap.png" 2>&1 && echo "Saved to /sdcard/screencap.png" || echo "screencap failed" ;;
+    tree)
+        # Newer patched builds write to a file; the stable/original service
+        # emits the tree through Logcat. Support both protocols.
+        tree_file="/sdcard/Download/accessdroid-tree.txt"
+        /system/bin/rm -f "$tree_file" 2>/dev/null || true
+        /system/bin/logcat -c 2>/dev/null || true
+        /system/bin/am broadcast --user 0 -p "$PKG" \
+            -a "com.accessdroid.termux.ACTION_GET_UI_TREE" \
+            --es secret "$SECRET" --es output "$tree_file" >/dev/null 2>&1
+        for _i in $(seq 1 30); do
+            if [[ -s "$tree_file" ]]; then
+                /system/bin/cat "$tree_file"
+                exit 0
+            fi
+            tree_log="$(/system/bin/logcat -d -v brief 2>/dev/null | grep -E 'AccessDroid|D/AccessDroid' || true)"
+            if [[ -n "$tree_log" ]]; then
+                printf '%s\n' "$tree_log" > "$tree_file"
+                /system/bin/cat "$tree_file"
+                exit 0
+            fi
+            sleep "${AMCTL_TREE_INTERVAL:-0.1}"
+        done
+        echo "AccessDroid did not write UI tree: $tree_file" >&2
+        exit 1
+        ;;
+    launch)     /system/bin/am start --user 0 -p "$2" -c android.intent.category.LAUNCHER -a android.intent.action.MAIN 2>&1 ;;
+    act|activity)
+        if [[ -n "${3:-}" ]]; then ac ACTION_START_ACTIVITY --es package "$2" --es class "$3"; else ac ACTION_START_ACTIVITY --es package "$2"; fi ;;
+    open)       ac ACTION_OPEN_URI --es uri "$2" ${3:+--es package "$3"} ;;
+    settings)   ac ACTION_OPEN_SETTINGS ${2:+--es page "$2"} ;;
+    press)      ac ACTION_PRESS_KEY --ei keyCode "$2" ;;
+    install)    /system/bin/am start --user 0 -a android.intent.action.VIEW -d "file://$2" -t application/vnd.android.package-archive 2>&1 ;;
+    kill)       /system/bin/am force-stop --user 0 "$2" 2>&1 ;;
+    broadcast)  shift; /system/bin/am broadcast --user 0 -a "$1" --es secret "$SECRET" "${@:2}" 2>&1 ;;
+    run)
+        while IFS= read -r line; do
+            line="${line%%#*}"; line="$(echo "$line" | xargs)"
+            [[ -z "$line" ]] && continue
+            echo "→ $line"; "$0" $line; sleep 0.2
+        done < "$2" ;;
+    dumpperms)  aapt2 dump badging /data/data/com.accessdroid.termux/build/AccessDroid.apk 2>&1 | grep uses-permission | sort ;;
+    grants)
+        /system/bin/appops query --user 0 com.accessdroid.termux 2>&1 | head -30
+        echo "---AppOps---"
+        /system/bin/dumpsys package com.accessdroid.termux 2>&1 | grep -E "permission|grant" | head -20 ;;
+    status)
+        /system/bin/am broadcast --user 0 -p "$PKG" -a com.accessdroid.termux.ACTION_BACK --es secret "$SECRET" 2>&1
+        echo "If 'Broadcast sent' → service is installed. Enable Accessibility if no tap response." ;;
+    list)       /system/bin/pm list packages --user 0 -f 2>/dev/null | sed 's/^package://' | awk -F'=' '{printf "%-50s %s\n",$1,$2}' ;;
+    help|-h|--help|*)
+        cat <<HELP
+Usage: amctl <command> [args...]
+  GESTURES: tap X Y [ms] | doubletap X Y | longpress X Y [ms] | swipe X1 Y1 X2 Y2 [ms]
+  TEXT: type "text" | clear | paste | focus "needle" | focus --id resource-id
+  SCREEN: screenshot | screencap | tree
+  APP/SYS: launch <pkg> | activity <pkg> [cls] | open <uri> | settings [page]
+HELP
+        ;;
+esac
